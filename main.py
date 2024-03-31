@@ -360,7 +360,8 @@ def get_user(user_id):
             'name': user[1],
             'email': user[2],
             'password': user[3],
-            'role': user[4]
+            'role': user[4],
+            'authorized': True
         }
 
         conn.close()
@@ -612,6 +613,190 @@ def get_order_by_user(user_id):
     else:
         conn.close()
         return jsonify({'message': 'No orders found for the user'})
+
+
+
+
+
+
+
+
+
+
+
+
+############################################################### корзина
+
+# Метод для добавления элемента в таблицу "cart" с автоматической установкой даты создания
+@app.route('/add_to_cart', methods=['POST'])
+def add_to_cart():
+    data = request.get_json()
+    user_id = data.get('user_id')
+    dish_id = data.get('dish_id')
+    quantity = data.get('quantity')
+    
+    conn = sqlite3.connect('restaurant.db')
+    cur = conn.cursor()
+    
+    # Проверка наличия пользователя и его статуса is_deleted
+    cur.execute("SELECT * FROM cart WHERE user_id = ? AND is_deleted = 0", (user_id,))
+    existing_user = cur.fetchone()
+    
+    if existing_user:
+        # Получение текущего dish_list пользователя
+        cur.execute("SELECT dish_list FROM cart WHERE user_id = ? AND is_deleted = 0", (user_id,))
+        current_dish_list = cur.fetchone()[0]
+        
+        # Преобразование текущего dish_list из JSON
+        current_dish_list_dict = json.loads(current_dish_list)
+        
+        # Проверка наличия dish_id в текущем dish_list
+        if any(dish['dish_id'] == dish_id for dish in current_dish_list_dict):
+            for dish in current_dish_list_dict:
+                if dish['dish_id'] == dish_id:
+                    dish['quantity'] += quantity
+        else:
+            current_dish_list_dict.append({"dish_id": dish_id, "quantity": quantity})
+        
+        new_dish_list_json = json.dumps(current_dish_list_dict)
+        
+        # Обновление dish_list для пользователя
+        cur.execute("UPDATE cart SET dish_list = ? WHERE user_id = ? AND is_deleted = 0", (new_dish_list_json, user_id))
+    
+    else:
+        # Создание нового элемента в корзине для пользователя
+        new_dish_list = [{"dish_id": dish_id, "quantity": quantity}]
+        new_dish_list_json = json.dumps(new_dish_list)
+        
+        cur.execute("INSERT INTO cart (user_id, dish_list) VALUES (?, ?)", (user_id, new_dish_list_json))
+    
+    conn.commit()
+    conn.close()
+    
+    return jsonify({'message': 'Элемент успешно добавлен в корзину'})
+
+# Метод для получения всех записей из таблицы "cart"
+@app.route('/get_all_cart_items', methods=['GET'])
+def get_all_cart_items():
+    conn = sqlite3.connect('restaurant.db')
+    cur = conn.cursor()
+    
+    cur.execute("SELECT * FROM cart")
+    rows = cur.fetchall()
+    
+    cart_items = []
+    for row in rows:
+        cart_item = {
+            'id': row[0],
+            'user_id': row[1],
+            'dish_list': row[2],
+            'created_at': row[3],
+            'is_deleted': row[4]
+        }
+        cart_items.append(cart_item)
+    
+    conn.close()
+    
+    return jsonify({'cart_items': cart_items})
+
+
+# {
+#     "user_id": 123,
+#     "dish_list": [{"dish_id": 1, "quantity": 2}, {"dish_id": 2, "quantity": 1}]
+# }
+
+
+
+
+
+
+
+
+# Метод для изменения или удаления элемента в корзине по user_id и is_deleted = 0
+@app.route('/update_cart_item', methods=['PUT'])
+def update_cart_item():
+    data = request.get_json()
+    user_id = data.get('user_id')
+    dish_id = data.get('dish_id')
+    quantity = data.get('quantity')
+    deleted = data.get('deleted')
+    
+    conn = sqlite3.connect('restaurant.db')
+    cur = conn.cursor()
+    
+    # Получение текущего dish_list пользователя
+    cur.execute("SELECT dish_list FROM cart WHERE user_id = ? AND is_deleted = 0", (user_id,))
+    current_dish_list = cur.fetchone()
+    
+    if current_dish_list:
+        current_dish_list_dict = json.loads(current_dish_list[0])
+        
+        # Поиск блюда по dish_id
+        found = False
+        for dish in current_dish_list_dict:
+            if dish['dish_id'] == dish_id:
+                found = True
+                if deleted == 1:
+                    current_dish_list_dict.remove(dish)
+                else:
+                    dish['quantity'] = quantity
+        
+        if not found and deleted == 1:
+            return jsonify({'error': 'Нет такого блюда в корзине'})
+        
+        new_dish_list_json = json.dumps(current_dish_list_dict)
+        
+        # Обновление dish_list для пользователя
+        cur.execute("UPDATE cart SET dish_list = ? WHERE user_id = ? AND is_deleted = 0", (new_dish_list_json, user_id))
+        conn.commit()
+        conn.close()
+        
+        return jsonify({'message': 'Элемент успешно изменен или удален в корзине'})
+    
+    else:
+        return jsonify({'error': 'Нет предметов в корзине для данного пользователя'})
+
+# {
+#     "user_id": 2,
+#     "dish_id" : 3,
+#     "quantity": 2,
+#     "ideleted": 0 or 1
+# } 
+
+
+
+# Метод для удаления элемента из корзины по id
+@app.route('/delete_cart_item/<int:item_id>', methods=['PUT'])
+def delete_cart_item(item_id):
+    conn = sqlite3.connect('restaurant.db')
+    cur = conn.cursor()
+    
+    # Обновление поля is_deleted для элемента корзины по id
+    cur.execute("UPDATE cart SET is_deleted = 1 WHERE id = ?", (item_id,))
+    
+    conn.commit()
+    conn.close()
+    
+    return jsonify({'message': 'Элемент успешно удален из корзины'})
+
+# Метод для получения корзины по user_id и is_deleted = 0
+@app.route('/get_cart_items/<int:user_id>', methods=['GET'])
+def get_cart_items(user_id):
+    conn = sqlite3.connect('restaurant.db')
+    cur = conn.cursor()
+    
+    # Получение корзины пользователя с указанным user_id и is_deleted = 0
+    cur.execute("SELECT dish_list FROM cart WHERE user_id = ? AND is_deleted = 0", (user_id,))
+    cart_items = cur.fetchone()
+    
+    conn.close()
+    
+    if cart_items:
+        # Преобразование строки JSON в объекты Python
+        cart_items_json = json.loads(cart_items[0].replace("\\", ""))
+        return jsonify({'cart_items': cart_items_json})
+    else:
+        return jsonify({'message': 'Корзина пуста или не найдена'})
 
 if __name__ == '__main__':
     app.run(debug=True)
