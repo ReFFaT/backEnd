@@ -501,36 +501,27 @@ def login():
                 # заказыуууууууууууууууууууууууууууууууууууууууууууууууууууууууууууууууууууууууууууууууууууууууууууууууууууууууууууууууууууууууууууууууууууу
 
 
-# Удаление заказа по его ID
-@app.route('/order/<int:order_id>', methods=['DELETE'])
-def delete_order(order_id):
-    conn = sqlite3.connect('restaurant.db')
-    cur = conn.cursor()
+# # Удаление заказа по его ID
+# @app.route('/order/<int:order_id>', methods=['POST'])
+# def delete_order(order_id):
+#     conn = sqlite3.connect('restaurant.db')
+#     cur = conn.cursor()
 
-    # Проверяем, существует ли заказ с указанным ID
-    cur.execute("SELECT id FROM orders WHERE id = ?", (order_id,))
-    existing_order = cur.fetchone()
+#     # Проверяем, существует ли заказ с указанным ID
+#     cur.execute("SELECT id FROM orders WHERE id = ?", (order_id,))
+#     existing_order = cur.fetchone()
 
-    if existing_order:
-        # Удаляем заказ из таблицы
-        cur.execute("DELETE FROM orders WHERE id = ?", (order_id,))
-        conn.commit()
-        conn.close()
-        return jsonify({'message': 'Order deleted successfully'})
-    else:
-        conn.close()
-        return jsonify({'message': 'Order not found'})
+#     if existing_order:
+#         # Удаляем заказ из таблицы
+#         cur.execute("DELETE FROM orders WHERE id = ?", (order_id,))
+#         conn.commit()
+#         conn.close()
+#         return jsonify({'message': 'Order deleted successfully'})
+#     else:
+#         conn.close()
+#         return jsonify({'message': 'Order not found'})
     
 
-
-
-
-
-
-
-
-
-    
 # Создание нового заказа
 @app.route('/order', methods=['POST'])
 def create_order():
@@ -545,40 +536,70 @@ def create_order():
     address = order_data['address']
     time = order_data['time']
     dish_list = order_data['list']
+    status = order_data.get('status', 'created')  # Получаем значение статуса заказа, если оно указано, иначе используем значение по умолчанию "created"
+    phone = order_data.get('phone')
 
     # Проверяем, существует ли пользователь с указанным ID
     cur.execute("SELECT id FROM users WHERE id = ?", (user_id,))
     existing_user = cur.fetchone()
 
     if existing_user:
-        # Вставляем новый заказ в таблицу "orders"
-        cur.execute("INSERT INTO orders (user_id, address, time, dishList) VALUES (?, ?, ?, ?)",
-                    (user_id, address, time, json.dumps(dish_list)))
+        # Вставляем новый заказ в таблицу "orders" с пометкой is_deleted = 0 и статусом "created"
+        cur.execute("INSERT INTO orders (user_id, address, time, dishList, is_deleted, status, phone) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (user_id, address, time, json.dumps(dish_list), 0, status, phone))
         conn.commit()
         conn.close()
         return jsonify({'message': 'Order created successfully'})
     else:
         conn.close()
         return jsonify({'message': 'User not found'})
-#     {
-#   "user_id": 1,
-#   "address": "123 Main St, City",
-#   "time": "2023-06-02 15:30",
-#   "list": [
-#     {
-#       "id": 1,
-#       "value": 2
-#     },
-#     {
-#       "id": 2,
-#       "value": 1
-#     },
-#     {
-#       "id": 3,
-#       "value": 3
-#     }
-#   ]
-# }
+# cur.execute("INSERT INTO orders (id, user_id, address, time, dishList, is_deleted, status) VALUES (?, ?, ?, ?, ?, ?, ?)",
+#             (1, 1, "Some address", "Some time", json.dumps([
+#                 {
+#                     "id": 1,
+#                     "value": 2
+#                 },
+#                 {
+#                     "id": 2,
+#                     "value": 3
+#                 },
+#                 {
+#                     "id": 3,
+#                     "value": 1
+#                 }
+#             ]), 0, "pending"))
+
+# получение всех элементов
+
+@app.route('/orders', methods=['GET'])
+def get_orders():
+    conn = sqlite3.connect('restaurant.db')
+    cur = conn.cursor()
+
+    # Получаем все неудаленные заказы из таблицы "orders"
+    cur.execute("SELECT * FROM orders", ())
+    orders = cur.fetchall()
+
+    conn.close()
+
+    if orders:
+        orders_list = []
+        for order in orders:
+            order_data = {
+                'id': order[0],
+                'user_id': order[1],
+                'address': order[2],
+                'time': order[3],
+                'dish_list': json.loads(order[4]),
+                'is_deleted': order[5],
+                'status': order[6],
+                'phone': order[7]
+            }
+            orders_list.append(order_data)
+
+        return jsonify({'orders': orders_list})
+    else:
+        return jsonify({'message': 'No orders found'})
 
 
 
@@ -588,8 +609,8 @@ def get_order_by_user(user_id):
     conn = sqlite3.connect('restaurant.db')
     cur = conn.cursor()
 
-    # Получаем информацию о заказе пользователя из таблицы "orders"
-    cur.execute("SELECT * FROM orders WHERE user_id = ?", (user_id,))
+    # Получаем информацию о заказах пользователя из таблицы "orders" без удаленных заказов
+    cur.execute("SELECT * FROM orders WHERE user_id = ? AND is_deleted = 0", (user_id,))
     orders = cur.fetchall()
 
     if orders:
@@ -604,7 +625,9 @@ def get_order_by_user(user_id):
                 "user_id": order[1],
                 "address": order[2],
                 "time": order[3],
-                "list": dish_list
+                "list": dish_list,
+                "status": order[6],
+                "phone": order[7]
             }
             response.append(order_data)
 
@@ -616,6 +639,26 @@ def get_order_by_user(user_id):
 
 
 
+# удаление заказа
+@app.route('/order/<int:order_id>', methods=['DELETE'])
+def delete_order(order_id):
+    conn = sqlite3.connect('restaurant.db')
+    cur = conn.cursor()
+
+    # Получаем информацию о заказе по ID
+    cur.execute("SELECT * FROM orders WHERE id = ?", (order_id,))
+    order = cur.fetchone()
+
+    if order:
+        # Устанавливаем флаг is_deleted в 1 для мягкого удаления заказа
+        cur.execute("UPDATE orders SET is_deleted = 1 WHERE id = ?", (order_id,))
+        conn.commit()
+
+        conn.close()
+        return jsonify({'message': 'Order soft-deleted successfully'})
+    else:
+        conn.close()
+        return jsonify({'message': 'Order not found'})
 
 
 
@@ -779,22 +822,28 @@ def delete_cart_item(item_id):
     
     return jsonify({'message': 'Элемент успешно удален из корзины'})
 
-# Метод для получения корзины по user_id и is_deleted = 0
+# Метод для получения полной информации о корзине по user_id и is_deleted = 0
 @app.route('/get_cart_items/<int:user_id>', methods=['GET'])
 def get_cart_items(user_id):
     conn = sqlite3.connect('restaurant.db')
     cur = conn.cursor()
     
-    # Получение корзины пользователя с указанным user_id и is_deleted = 0
-    cur.execute("SELECT dish_list FROM cart WHERE user_id = ? AND is_deleted = 0", (user_id,))
+    # Получение полной информации о корзине пользователя с указанным user_id и is_deleted = 0
+    cur.execute("SELECT * FROM cart WHERE user_id = ? AND is_deleted = 0", (user_id,))
     cart_items = cur.fetchone()
     
     conn.close()
     
     if cart_items:
         # Преобразование строки JSON в объекты Python
-        cart_items_json = json.loads(cart_items[0].replace("\\", ""))
-        return jsonify({'cart_items': cart_items_json})
+        cart_items_dict = {
+            'id': cart_items[0],
+            'user_id': cart_items[1],
+            'dish_list': json.loads(cart_items[2].replace("\\", "")),
+            'created_at': cart_items[3],
+            'is_deleted': cart_items[4]
+        }
+        return jsonify({'cart_items': cart_items_dict})
     else:
         return jsonify({'message': 'Корзина пуста или не найдена'})
 
